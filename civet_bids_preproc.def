@@ -1,0 +1,561 @@
+Bootstrap: docker
+From: ubuntu:18.04
+
+%setup
+        IMPORT_DIR="civet-2.1.1-binaries-ubuntu-18/Linux-x86_64/"
+        rsync -r -L ${IMPORT_DIR}/* ${SINGULARITY_ROOTFS}/
+	cp ./nii_slice.py ${SINGULARITY_ROOTFS}/nii_slice.py
+	cp ./mask_diff.py ${SINGULARITY_ROOTFS}/mask_diff.py
+	cp ./requirements.txt ${SINGULARITY_ROOTFS}/requirements.txt
+
+%environment
+
+%post
+        # Perl dependencies for CIVET
+        apt-get update
+	apt-get install -y python3.8 python3-pip
+	python3.8 -m pip install --upgrade pip
+	python3.8 -m pip install -r /requirements.txt
+        apt-get install -y perl perl-base perl-depends perl-modules-5.26
+	chmod -R o+rx CIVET-2.1.1
+	chmod o+rx /nii_slice.py
+	chmod -R o+rx /bin/
+	chmod -R o+rx /lib
+	chmod -R o+rx /perl
+	chmod -R o+rx /share
+	
+        # CIVET's init.sh
+        MNIBASEPATH=/
+        CIVET=CIVET-2.1.1
+
+        echo "export LC_CTYPE=en_US.UTF-8" >> ${SINGULARITY_ENVIRONMENT}
+        echo "export LC_ALL=C" >> ${SINGULARITY_ENVIRONMENT}
+        echo "export PATH=\"$MNIBASEPATH/$CIVET/progs:$MNIBASEPATH/bin:\"$PATH" >> ${SINGULARITY_ENVIRONMENT}
+
+        echo "export LD_LIBRARY_PATH=\"$MNIBASEPATH/lib:\"$LD_LIBRARY_PATH" >> ${SINGULARITY_ENVIRONMENT}
+
+        echo "export MNI_DATAPATH=\"$MNIBASEPATH/share:\"$MNI_DATAPATH" >> ${SINGULARITY_ENVIRONMENT}
+        echo "export PERL5LIB=\"$MNIBASEPATH/perl:\"$PERL5LIB" >> ${SINGULARITY_ENVIRONMENT}
+        echo "export R_LIBS=\"$MNIBASEPATH/R_LIBS:\"$R_LIBS" >> ${SINGULARITY_ENVIRONMENT}
+        echo "export VOLUME_CACHE_THRESHOLD=-1" >> ${SINGULARITY_ENVIRONMENT}
+
+        echo "export BRAINVIEW=\"$MNIBASEPATH/share/brain-view\"" >> ${SINGULARITY_ENVIRONMENT}
+
+        echo "export MINC_FORCE_V2=1" >> ${SINGULARITY_ENVIRONMENT}
+        echo "export MINC_COMPRESS=4" >> ${SINGULARITY_ENVIRONMENT}
+
+        echo "export CIVET_JOB_SCHEDULER=DEFAULT" >> ${SINGULARITY_ENVIRONMENT}
+
+        # Add CIVET scrips to PATH
+        echo 'export PATH=${PATH}:/CIVET-2.1.1/' >> ${SINGULARITY_ENVIRONMENT}
+
+%runscript
+#!/bin/bash
+# This script takes in a BIDS-compatible directory and applies CIVET to the specified data.
+#set -e -u
+helpstr="$(basename $0) [-h] --subject DIR --output DIR [--session SES] [--model PATH] [--ignore-t1] [--ignore-t2] [--ignore-pd] [-q, --quiet] [--intermediate DIR]
+
+where:
+	-h,--help		Show this message.
+	--subject DIR		BIDS-compliant subject directory. If defined, supercedes --cohort. Either --subject or --cohort must be specified.
+	--output DIR		Directory to place pipeline output.
+	--lesion-t1 PATH	Optional. Path to T1 lesion mask to co-register. 
+	--lesion-flair PATH	Optional. Path to FLAIR lesion mask to co-register.
+	--lesion-dwi PATH	Optional. Path to DWI lesion mask to co-register.
+	--qc DIR		Optional. Directory where to place QC image.
+	--mask-overlap-db PATH	Optional. Path to the SQL database containing the mask overlap results. The file will be created if it doesn't exist. If not set, mask overlap will not be computed.
+	--mask-overlap-csv PATH	Optional. If set, will create a CSV copy of the DB. Requires --mask-overlap-db to be set.
+	--session SES		Optional. Specify the session to analyze.
+	--ignore-t1		Optional. Ignore T1 image. Default: False.
+	--ignore-t2		Optional. Ignore T2 image. Default: False.
+	--ignore-pd		Optional. Ignore PD image. Default: False.
+	-q, --quiet		Optional. Suppress warnings. Default: False.
+	--intermediate DIR	Optional. Keep intermediate files   (direct CIVET output, resampled, normalized). Increases size of output by >3x. Default: False.
+	--civet-opts OPTS	Optional. Set the options to pass to CIVET. All arguments after this flag are passed directly to CIVET.
+"
+
+session_list=()
+ignore_t1=0
+ignore_t2=0
+ignore_pd=0
+quiet=0
+keep=0
+#qc_dir=''
+lesion_list=()
+model="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a.mnc"
+model_mask="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc"
+model_label="MNI125NLin2009aSym"
+
+echo "Parsing input..."
+
+
+while (( "$#" )); do
+	case "$1" in
+		-h|--help)
+			echo "${helpstr}"
+			exit 0
+			;;
+		--subject)
+			subject_dir=`readlink -f "${2}"`
+			buf="${subject_dir##*/}"
+			subject_id="${buf##sub-}"
+			shift 2
+			;;
+		--output)
+			output=`readlink -f "${2}"`
+			mkdir -p ${output}
+			shift 2
+			;;
+		--input_list)
+			input_list_file="${2}"
+			shift 2
+			;;
+		--session)
+			session_list+=("${2}")
+			shift 2
+			;;
+		--ignore-t1)
+			ignore_t1=1
+			shift 1
+			;;
+		--ignore-t2)
+			ignore_t2=1
+			shift 1
+			;;
+		--ignore-pd)
+			ignore_pd=1
+			shift 1
+			;;
+		-q|--quiet)
+			quiet=1
+			shift 1
+			;;
+		--intermediate)
+			keep=1
+			inter_dir="${2}"
+			shift 2
+			;;
+		--qc)
+			qc_dir="${2}"
+			shift 2
+			;;
+		--civet-opts)
+			shift 1
+			civet_opts="$@"
+			break
+			;;
+		--session)
+			session="${2}"
+			shift 2
+			;;
+		--lesion-t1)
+			lesion_t1="${2}"
+			shift 2
+			;;
+		--lesion-flair)
+			lesion_flair="${2}"
+			shift 2
+			;;
+		--lesion-dwi)
+			lesion_dwi="${2}"
+			shift 2
+			;;
+		--mask-overlap-db)
+			mask_db="${2}"
+			shift 2
+			;;
+		--mask-overlap-csv)
+			mask_csv="${2}"
+			shift 2
+			;;
+		*)
+			>&2 echo "Unexpected argument: ${1}"
+			exit 1
+			;;
+	esac
+done
+
+# Define quiet echo
+qecho () {
+if [ "${quiet}" -eq 0 ]; then
+	echo "$@"
+fi
+}
+
+qecho "Starting execution."
+# Find files in specified subject directory
+
+# Check sessions
+if [ "${#session_list[@]}" -eq 0 ]; then
+	# No sessions specified; take all available sessions
+	for ses in `ls -1d ${subject_dir}/ses-*`; do
+		session_list+=("${ses##*/}")
+	done
+fi
+
+# Sanity check if user inputs "1" instead of "ses-1"
+new_sess_list=()
+for ind in `seq 0 $((${#session_list[@]}-1))`; do
+	if [ -d "${subject_dir}/${session_list[${ind}]}" ]; then
+		# exists; continue
+		new_sess_list+=("${session_list[${ind}]}")
+		continue
+	elif [ -d "${subject_dir}/ses-${session_list[${ind}]}" ]; then
+		# exists if ses- is prepended
+		new_sess_list+=("ses-${session_list[${ind}]}")
+	else
+		qecho "WARNING: session ${session_list[${ind}]} doesn't exist. It will be ignored."
+	fi
+done
+session_list=(${new_sess_list[@]})
+if [ "${#session_list[@]}" -eq 0 ]; then
+	2&> echo "No valid sessions; aborting."
+	exit 1
+fi
+
+anat_pathlist=()
+for sess in ${session_list[@]}; do
+	anat_pathlist+=(${subject_dir}/${sess}/anat/)
+done
+
+# Get t1, t2, pd images
+## Image arrays match session_list array
+t1_list=()
+t2_list=()
+pd_list=()
+for anat in ${anat_pathlist[@]}; do
+	# TODO: instead of looking for any _T1w, check against user-specified entity-value pairs.
+	# TODO: - requires modification of input arg parsing
+	ses_t1_list=(`find ${anat}/ -name "*_T1w.nii*" -type f`)
+	ses_t2_list=(`find ${anat}/ -name "*_T2w.nii*" -type f`)
+	ses_pd_list=(`find ${anat}/ -name "*_PDw.nii*" -type f`)
+	# T1 image
+	if [ "${ignore_t1}" -eq 0 ]; then
+		if [ "${#ses_t1_list[@]}" -gt 1 ]; then
+			>&2 echo "Multiple T1 images found; specify image to process."
+			exit 1
+		elif [ "${#ses_t1_list[@]}" -eq 1 ]; then
+			t1_list+=(`readlink -f "${ses_t1_list[0]}"`)
+		else
+			qecho "WARNING: Expected T1 in ${anat} but found none; ignoring."
+			t1_list+=("")
+		fi
+		
+	else
+		t1_list+=("")
+	fi
+	# T2 image
+	if [ "${ignore_t2}" -eq 0 ]; then
+		if [ "${#ses_t2_list[@]}" -gt 1 ]; then
+			>&2 echo "Multiple T2 images found; specify image to process"
+			exit 1
+		elif [ "${#ses_t2_list[@]}" -eq 1 ]; then
+			t2_list+=(`readlink -f "${ses_t2_list[0]}"`)
+		else
+			t2_list+=("")
+			qecho "WARNING: Expected T2 in ${anat} but found none; ignoring."
+		fi
+	else
+		t2_list+=("")
+	fi
+	# PD image
+	if [ "${ignore_pd}" -eq 0 ]; then
+		if [ "${#ses_pd_list[@]}" -gt 1 ]; then
+			>&2 echo "Multiple T2 images found; specify image to process"
+			exit 1
+		elif [ "${#ses_pd_list[@]}" -eq 1 ]; then
+			pd_list+=(`readlink -f "${ses_pd_list[0]}"`)
+		else
+			pd_list+=("")
+			qecho "WARNING: Expected PD in ${anat} but found none; ignoring."
+		fi
+	else
+		pd_list+=("")
+	fi
+done
+
+
+# subject_id
+ext_list=(.mnc .mnc.gz .nii .nii.gz)
+for sess_ind in `seq 0 $((${#session_list[@]}-1))`; do
+	# Start processing each session
+	## First need to check if we have to gunzip & convert for CIVET
+	sess=${session_list[${sess_ind}]}
+	t1_img=${t1_list[${sess_ind}]}
+	t2_img=${t2_list[${sess_ind}]}
+	pd_img=${pd_list[${sess_ind}]}
+	sess_out=${output}/sub-${subject_id}/ses-${sess}/
+	
+	is_nii=("" "" "")
+	is_gz=("" "" "")
+	img_ext=("" "" "")
+	img_list=("${t1_img}" "${t2_img}" "${pd_img}")
+	datdir=`mktemp -d`
+	for ext in ${ext_list[@]}; do
+		if [ -n "${t1_img}" ] && [ ${t1_img[@]: -${#ext}} = ${ext} ]; then
+			img_ext[0]=${ext}
+			is_nii[0]=0
+			is_gz[0]=0
+			if [ ".nii" = ${ext[@]::4} ]; then
+				is_nii[0]=1
+			fi
+			if [ ".gz" = ${ext[@]: -3} ]; then
+				is_gz[0]=1
+			fi
+		fi
+		if [ -n "${t2_img}" ] && [ ${t2_img[@]: -${#ext}} = ${ext} ]; then
+			img_ext[1]=${ext}
+			is_nii[1]=0
+			is_gz[1]=0
+			if [ ".nii" = ${ext[@]::4} ]; then
+				is_nii[1]=1
+			fi
+			if [ ".gz" = ${ext[@]: -3} ]; then
+				is_gz[1]=1
+			fi
+		fi
+		if [ -n "${pd_img}" ] && [ ${pd_img[@]: -${#ext}} = ${ext} ]; then
+			img_ext[2]=${ext}
+			is_nii[2]=0
+			is_gz[2]=0
+			if [ ".nii" = ${ext[@]::4} ]; then
+				is_nii[2]=1
+			fi
+			if [ ".gz" = ${ext[@]: -3} ]; then
+				is_gz[2]=1
+			fi
+		fi
+	done
+
+	# if not .mnc, convert, rename
+	modality_list=()
+	if [ "${ignore_t1}" -eq 0 ]; then
+		modality_list+=("t1")
+	fi
+	if [ "${ignore_t2}" -eq 0 ]; then
+		modality_list+=("t2")
+	fi
+	if [ "${ignore_pd}" -eq 0 ]; then
+		modality_list+=("pd")
+	fi
+	#modality_list=(t1 t2 pd)
+	for i in 0 1 2; do
+		if [ -z "${img_ext[$i]}" ]; then
+			continue
+		fi
+		if [ ${is_gz[$i]} -eq 1 ]; then
+			# unzip
+			echo "gunzipping ${img_list[$i]} to ${datdir}/${sess}_${subject_id}_${modality_list[$i]}${img_ext[$i]}"
+			gunzip -c -k ${img_list[$i]} > ${datdir}/${sess}_${subject_id}_${modality_list[$i]}${img_ext[$i]%*.gz}
+		else
+			echo "ln ${img_list[$i]} as ${datdir}/${sess}_${subject_id}_${modality_list[$i]}${img_ext[$i]}"
+			ln -s ${img_list[$i]} ${datdir}/${sess}_${subject_id}_${modality_list[$i]}${img_ext[$i]}
+		fi
+		if [ ${is_nii[$i]} -eq 1 ]; then
+			# convert to mnc
+			echo "converting to mnc: ${datdir}/${sess}_${subject_id}_${modality_list[$i]}.nii"
+			nii2mnc ${datdir}/${sess}_${subject_id}_${modality_list[$i]}.nii
+			rm ${datdir}/${sess}_${subject_id}_${modality_list[$i]}.nii
+		fi
+	done
+
+	# Process images according to CIVET pipeline:
+	civet_opts=()
+	if [ "${keep}" -eq 1 ]; then
+		civet_dir=${inter_dir}/civet/sub-${subject_id}/${sess}/
+		mkdir -p ${civet_dir}
+	else
+		civet_dir=`mktemp -d`
+	fi
+	
+	if [ "${#civet_opts[@]}" -eq 0 ]; then
+		# use default civet options
+		CIVET_Processing_Pipeline -sourcedir ${datdir} -targetdir ${civet_dir} -prefix ${sess} -N3-distance 200 -lsq12 -resample-surfaces -thickness tlaplace:tfs:tlink 30:20 -VBM -combine-surface -spawn -run ${subject_id}
+		mv ${civet_dir}/${subject_id}/* ${civet_dir}/
+	else
+		CIVET_Processing_Pipeline -sourcedir ${datdir} -targetdir ${civet_dir} -prefix ${sess} ${civet_opts} -run ${subject_id}
+		mv ${civet_dir}/${subject_id}/* ${civet_dir}/
+	fi
+
+	qecho "Resampling..."
+	# Resample output according to ${model}
+	resample_list=()
+	model_basename=`basename ${model}`
+	if [ "${keep}" -eq 1 ]; then
+		resample_dir=${inter_dir}/civet-resampled/sub-${subject_id}/${sess}/
+		mkdir -p ${resample_dir}
+	else
+		resample_dir=`mktemp -d`
+	fi
+
+	echo "{" >> ${resample_dir}/resampled.json
+	echo "\"resample_model\": \"${model_basename}\"" >> ${resample_dir}/resampled.json
+	echo "}" >> ${resample_dir}/resampled.json
+	
+	# Resample output, place in equivalent directory in ${resample_dir}
+	for f in `find "${civet_dir}/" -type f -name "*.mnc"`; do
+		# civet_dir = ${out}/sub-ID/ses-X/civet/
+		# file has ${civet_dir}/CIVET_DIR/filename
+		fname=`basename ${f}`
+		# strip ${civet_dir}
+		subdirname=`dirname ${f#${civet_dir}}`
+		mkdir -p ${resample_dir}/${subdirname}
+		
+		# remove subject, session; replace with BIDS-compliant name
+		civet_name=${fname#*${subject_id}_}
+		IFS="_" read -ra civ_split <<< "${civet_name}"
+		civ_ext=`printf "%s" ${civ_split[@]^}`
+		bids_fname="sub-${subject_id}_${sess}_desc-${civ_ext}"
+		res_out=${resample_dir}/${subdirname}/${bids_fname%.mnc}Resampled.mnc
+		mincresample -like "${model}" -clobber ${f} ${res_out} 
+		resample_list+=("${res_out}")
+	done
+
+	qecho "Normalizing..."
+	# Normalize intensity
+	if [ "${keep}" -eq 1 ]; then
+		normalize_dir=${inter_dir}/civet-normalized/sub-${subject_id}/${sess}/
+		mkdir -p ${normalize_dir}
+		cp ${resample_dir}/resampled.json ${normalize_dir}/
+	else
+		normalize_dir=`mktemp -d`
+	fi
+	
+	norm_list=()
+	for f in ${resample_list[@]}; do
+		fname=`basename ${f}`
+		norm_out=${normalize_dir}/${fname%.mnc}Norm.mnc
+		inormalize -range 1.0 -model ${model} ${f} ${norm_out} -clobber
+		norm_list+=("${norm_out}")
+	done
+	
+	qecho "Converting to BIDS derivatives"
+	# Convert to nii.gz
+	bids_dir=${output}/sub-${subject_id}/${sess}/
+	echo "making ${bids_dir}"
+	mkdir -p ${bids_dir}
+	#for f in ${norm_list[@]}; do
+	#	fname=`basename ${f}`
+	#	bids_out=${bids_dir}/${fname%.mnc}.nii
+	#	mnc2nii ${f} ${bids_out}
+	#	gzip -f ${bids_out}
+	#done
+	
+	# Need to get non-log text files from CIVET directory
+	#for f in `find ${civet_dir}/ -type f ! -name "*.mnc" ! -name "*.log" ! -name "*.finished" ! -name "*.nii" ! -name "*.nii.gz" ! -name "*.json" ! -name "*.failed"`; do
+	#	buf=`dirname ${f}`/
+	#	subdirname=${buf#*${civet_dir}}
+	#	fname=`basename ${f}`
+	#	# CIVET structure is [session]_[subject]_[desc]
+	#	desc=${fname#*${subject_id}_}
+	#	IFS="_" read -ra desc_split <<< "${desc}"
+	#	desc_label=`printf "%s" ${desc_split[@]^}`
+	#	bids_fname="sub-${subject_id}_${sess}_desc-${desc_label}"
+	#	
+	#	mkdir -p ${bids_dir}/${subdirname}
+	#	if [ "${keep}" -eq 1 ]; then
+	#		cp ${f} ${bids_dir}/${subdirname}/`basename ${bids_fname}`
+	#	else
+	#		mv ${f} ${bids_dir}/${subdirname}/`basename ${bids_fname}`
+	#	fi
+	#done
+
+	# Get transform, final
+	echo "Getting transform..."
+	for final in `ls ${normalize_dir}/*FinalResampledNorm*`; do
+		buf=`basename ${final}`
+		buf="${buf#*desc-}"
+		modality="${buf%FinalResampledNorm*}"
+		modality="${modality}"
+		desc_label="${modality^^}FinalResampledNorm"
+
+		mkdir -p "${bids_dir}/anat"
+		# Get "final"; file was gzipped previously
+		bids_final="sub-${subject_id}_${sess}_space-${model_label}_desc-${desc_label}.nii.gz"
+
+		# Convert to nii.gz
+		final_nii=${final%.mnc}.nii
+		mnc2nii ${final} ${final_nii}
+		gzip ${final_nii}		
+
+		if [ "${keep}" -eq 1 ]; then
+			cp ${final_nii}.gz ${bids_dir}/anat/${bids_final}
+		else
+			mv ${final_nii}.gz ${bids_dir}/anat/${bids_final}
+		fi
+		
+		# Get transform
+		tform_path="${civet_dir}/transforms/linear/${sess}_${subject_id}_${modality,,}_tal.xfm"
+		bids_tform="sub-${subject_id}_${sess}_desc-${modality^^}${model_label}.xfm"
+		if [ "${keep}" -eq 1 ]; then
+			cp "${tform_path}" "${bids_dir}/anat/${bids_tform}"
+		else
+			mv "${tform_path}" "${bids_dir}/anat/${bids_tform}"
+		fi
+		# Apply computed transform to lesion masks
+		# get lesion
+		lesion=""
+		
+		#for l in ${lesion_list[@]}; do
+		#	echo "lesion_list: ${l}"
+		#	lesion_file="${l}/${sess}/anat/sub-${subject_id}_${sess}_space-orig_label-L_desc-${modality^^}lesion_mask.nii.gz"
+		#	echo "lesion_file: ${lesion_file}"
+		#	qecho "Lesion check: ${lesion_file} against desc-${modality^^}lesion_mask"
+		#	if [[ "`basename ${lesion_file}`" == *"desc-${modality^^}lesion_mask"* ]]; then
+		#		lesion=${lesion_file}
+		#		break
+		#	fi
+		#done
+		#
+		#if [[ "${ignore_t1}" -eq 0 && "${modality}" == "t1" ]] || [[ "${ignore_t2}" -eq 0 && "${modality}" == "t2" ]]; then
+		lesion_list=("${lesion_t1}" "${lesion_flair}" "${lesion_dwi}")
+		echo "lesion_list: ${lesion_list[@]}"
+		for les in ${lesion_list[@]}; do
+			if [ -z "${les}" ]; then
+				qecho "WARNING: No lesion found for modality ${modality}"
+				qecho "Checked ${lesion}"
+				continue
+			fi
+			buf=`basename "${les}"`
+			pre="${buf%space-orig*}"
+			post="${buf#*space-orig}"
+			lesion_bidsname="${pre}space-${model_label}${post}"
+
+			# Convert mask to mnc before transforming
+			tmpdir=`mktemp -d`
+			gunzip -c -k "${les}" > "${tmpdir}/lesionmask.nii"
+			nii2mnc "${tmpdir}/lesionmask.nii" "${tmpdir}/lesionmask.mnc"
+			mincresample -clobber -like "${model}" -transformation "${bids_dir}/anat/${bids_tform}" "${tmpdir}/lesionmask.mnc" "${tmpdir}/lesionmask_reg.mnc"
+			
+			# Convert back to nii.gz, move to output
+			mnc2nii "${tmpdir}/lesionmask_reg.mnc" "${tmpdir}/lesionmask_reg.nii"
+			gzip "${tmpdir}/lesionmask_reg.nii"
+			cp "${tmpdir}/lesionmask_reg.nii.gz" "${bids_dir}/anat/${lesion_bidsname}"
+
+			# QC 
+			qc_name="${bids_dir}/anat/sub-${subject_id}_${sess}_desc-QC.png"
+			image_name="${bids_dir}/anat/${bids_final}"
+			mask_name="${bids_dir}/anat/${lesion_bidsname}"
+			python3.8 /nii_slice.py ${image_name} ${qc_name} --mask_path ${mask_name} --nslices 9
+
+			if [ -n "${qc_dir}" ]; then
+				mkdir -p ${qc_dir}
+				cp ${qc_name} ${qc_dir}/`basename ${qc_name}`
+			fi
+			 
+			if [ -n "${mask_db}" ]; then
+				python3.8 /mask_diff.py --mask_subject ${bids_dir}/anat/${lesion_bidsname} --mask_ref ${model_mask} --database ${mask_db} --csv ${mask_csv}
+			fi
+
+			#
+		done
+
+	
+
+	done
+
+
+
+done
+
+
