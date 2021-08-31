@@ -7,8 +7,8 @@ From: ubuntu:18.04
 	cp ./nii_slice.py ${SINGULARITY_ROOTFS}/nii_slice.py
 	cp ./mask_diff.py ${SINGULARITY_ROOTFS}/mask_diff.py
 	cp ./requirements.txt ${SINGULARITY_ROOTFS}/requirements.txt
-	cp ./mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc ${SINGULARITY_ROOTFS}/mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc
-	cp ./mni_icbm152_t1_tal_nlin_sym_09a.mnc ${SINGULARITY_ROOTFS}/mni_icbm152_t1_tal_nlin_sym_09a.mnc
+	#cp ./mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc ${SINGULARITY_ROOTFS}/mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc
+	#cp ./mni_icbm152_t1_tal_nlin_sym_09a.mnc ${SINGULARITY_ROOTFS}/mni_icbm152_t1_tal_nlin_sym_09a.mnc
 
 %environment
 
@@ -217,13 +217,7 @@ tmptransf="${tmpdir}/init.xfm"
 t1_blur="${t1_mnc%.mnc}"
 model_blur="${tmpdir}/model"
 qecho "Saving to ${transformation}"
-mincblur -quiet -clobber -fwhm 8 "${t1_mnc}" "${t1_blur}"
-mincblur -quiet -clobber -fwhm 8 "${model}" "${model_blur}"
-t1_blur_name="${t1_blur}_blur.mnc"
-model_blur_name="${model_blur}_blur.mnc"
-minctracc -quiet -clobber -est_translation -lsq6 "${t1_blur_name}" "${model_blur_name}" "${tmptransf}"
-minctracc -quiet -clobber -transformation "${tmptransf}" -lsq12 "${t1_blur_name}" "${model_blur_name}" "${tmptransf}"
-minctracc -quiet -clobber -transformation "${tmptransf}" -lsq12 -tol 0.001 "${t1_mnc}" "${model}" "${transformation}"
+perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -target_mask "${model_mask}" "${t1_mnc}" "${model}" "${transformation}"
 
 # NUC
 # First try do brain extraction using transformation
@@ -233,7 +227,7 @@ mask_native="${tmpdir}/mask_to_native.mnc"
 mincresample -clobber -quiet -transformation "${transformation}" -invert_transformation -like "${t1_mnc}" -nearest_neighbour "${model_mask}" "${mask_native}"
 nu_correct -quiet -clobber -tmpdir "${tmpdir}/nu_correct/" -mask "${mask_native}" -distance 200 -mapping_dir "${tmpdir}" "${t1_mnc}" "${tmpdir}/nu_correct/t1_nuc_tmp0.mnc"
 qecho "Looping..."
-for i in `seq 0 1`; do
+for i in `seq 0 2`; do
   qecho "Loop ${i}"
   nu_correct -quiet -clobber -tmpdir "${tmpdir}/nu_correct/" -mask "${mask_native}" -distance 200 -mapping_dir "${tmpdir}" "${tmpdir}/nu_correct/t1_nuc_tmp${i}.mnc" "${tmpdir}/nu_correct/t1_nuc_tmp$((i+1)).mnc"
 done
@@ -279,7 +273,7 @@ if [ -n "${lesion_t1}" ]; then
 
   qecho "Converting ${lesion_file} to mnc"
   nii2mnc "${lesion_file}" "${tmpdir}/t1_lesion.mnc"
-  mincresample -clobber -quiet -transformation "${transformation}" -like "${model}" -trilinear "${tmpdir}/t1_lesion.mnc" "${tmpdir}/lesion_reg.mnc"
+  mincresample -clobber -quiet -transformation "${transformation}" -like "${model}" -nearest_neighbour "${tmpdir}/t1_lesion.mnc" "${tmpdir}/lesion_reg.mnc"
   mnc2nii "${tmpdir}/lesion_reg.mnc" "${tmpdir}/lesion_reg.nii"
   gzip "${tmpdir}/lesion_reg.nii"
   mv "${tmpdir}/lesion_reg.nii.gz" "${bids_dir_out}/${lesion_outname}"
@@ -289,7 +283,13 @@ fi
 qc_name="${bids_dir_out}/sub-${subject_id}_ses-${session}_desc-QC.png"
 #image_name="${bids_dir_out}/anat/${bids_final}"
 #mask_name="${bids_dir_out}/anat/${lesion_bidsname}"
-python3.8 /nii_slice.py "${bids_dir_out}/${bids_final_name}" "${qc_name}" --mask_path ${bids_dir_out}/${lesion_outname} --nslices 9
+model_mask_nii="${tmpdir}/model_mask.nii"
+mnc2nii "${model_mask}" "${model_mask_nii}"
+if [ -n "${model_mask}" ]; then
+  python3.8 /nii_slice.py "${bids_dir_out}/${bids_final_name}" "${qc_name}" --mask_path ${bids_dir_out}/${lesion_outname} --nslices 9 --mask_template "${model_mask_nii}"
+else
+  python3.8 /nii_slice.py "${bids_dir_out}/${bids_final_name}" "${qc_name}" --mask_path ${bids_dir_out}/${lesion_outname} --nslices 9
+fi
 #python3.8 /nii_slice.py "${bids_dir_out}/${bids_final_name}" "${qc_name}" --mask_path ${model_mask} --nslices 9
 
 if [ -n "${qc_dir}" ]; then
