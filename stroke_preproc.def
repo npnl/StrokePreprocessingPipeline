@@ -7,13 +7,9 @@ From: ubuntu:18.04
 	cp ./nii_slice.py ${SINGULARITY_ROOTFS}/nii_slice.py
 	cp ./mask_diff.py ${SINGULARITY_ROOTFS}/mask_diff.py
 	cp ./requirements.txt ${SINGULARITY_ROOTFS}/requirements.txt
-	#cp ./mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc ${SINGULARITY_ROOTFS}/mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc
-	#cp ./mni_icbm152_t1_tal_nlin_sym_09a.mnc ${SINGULARITY_ROOTFS}/mni_icbm152_t1_tal_nlin_sym_09a.mnc
-
-%environment
 
 %post
-        # Perl dependencies for CIVET
+  # Perl dependencies for CIVET
   apt-get update
 	apt-get install -y python3.8 python3-pip
 	python3.8 -m pip install --upgrade pip
@@ -183,7 +179,6 @@ fi
 # Define temo working dir
 tmpdir=`mktemp -d`
 
-
 qecho "Starting execution."
 # Check session
 if [ -z "${session}" ]; then
@@ -239,12 +234,6 @@ mincresample -clobber -quiet -transformation "${transformation}" -like "${model}
 # Normalize
 qecho "Normalizing."
 inormalize -quiet -clobber -range 1.0 -model "${model}" "${tmpdir}/resampled.mnc" "${tmpdir}/norm_reg.mnc"
-
-## Normalize image
-#inormalize -quiet -clobber -range 1.0 -model "${model}" "${tmpdir}/nu_correct/t1_nuc_tmp${i}.mnc" "${tmpdir}/norm.mnc"
-#
-## Transform nuc image to model
-#mincresample -clobber -quiet -transformation "${transformation}" -like "${model}" -trilinear "${tmpdir}/norm.mnc" "${tmpdir}/norm_reg.mnc"
 
 # Convert to nii & gzip
 qecho "Finalizing T1w image"
