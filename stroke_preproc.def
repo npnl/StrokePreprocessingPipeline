@@ -50,6 +50,7 @@ From: ubuntu:18.04
 %runscript
 #!/bin/bash
 
+
 # This script takes in a BIDS-compatible directory and applies CIVET to the specified data.
 #set -e -u
 helpstr="$(basename $0) [-h] --subject DIR --output DIR [--session SES] [--model PATH] [--ignore-t1] [--ignore-t2] [--ignore-pd] [-q, --quiet] [--intermediate DIR]
@@ -182,6 +183,7 @@ fi
 # Define temo working dir
 tmpdir=`mktemp -d`
 
+
 qecho "Starting execution."
 # Check session
 if [ -z "${session}" ]; then
@@ -215,7 +217,10 @@ tmptransf="${tmpdir}/init.xfm"
 t1_blur="${t1_mnc%.mnc}"
 model_blur="${tmpdir}/model"
 qecho "Saving to ${transformation}"
-perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -target_mask "${model_mask}" "${t1_mnc}" "${model}" "${transformation}"
+#mincbet "${t1_mnc}" "${tmpdir}/t1_mnc_bet" -m -f 0.2 -g -0.5
+#perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -target_mask "${model_mask}" -source_mask "${tmpdir}/t1_mnc_bet_mask.mnc" "${t1_mnc}" "${model}" "${transformation}"
+#perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -target_mask "${model_mask}" -source_mask "${tmpdir}/t1_mnc_bet_mask.mnc" "${t1_mnc}" "${model}" "${transformation}"
+perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -nmi "${t1_mnc}" "${model}" "${transformation}"
 
 # NUC
 # First try do brain extraction using transformation
@@ -237,6 +242,12 @@ mincresample -clobber -quiet -transformation "${transformation}" -like "${model}
 # Normalize
 qecho "Normalizing."
 inormalize -quiet -clobber -range 1.0 -model "${model}" "${tmpdir}/resampled.mnc" "${tmpdir}/norm_reg.mnc"
+
+## Normalize image
+#inormalize -quiet -clobber -range 1.0 -model "${model}" "${tmpdir}/nu_correct/t1_nuc_tmp${i}.mnc" "${tmpdir}/norm.mnc"
+#
+## Transform nuc image to model
+#mincresample -clobber -quiet -transformation "${transformation}" -like "${model}" -trilinear "${tmpdir}/norm.mnc" "${tmpdir}/norm_reg.mnc"
 
 # Convert to nii & gzip
 qecho "Finalizing T1w image"
