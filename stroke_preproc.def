@@ -79,8 +79,8 @@ quiet=0
 keep=0
 #qc_dir=''
 lesion_list=()
-model="/share/mni-models//mni_icbm152_t1_tal_nlin_sym_09a.mnc"
-model_mask="/share/mni-models//mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc"
+model="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a.mnc"
+model_mask="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc"
 model_label="MNI125NLin2009aSym"
 
 echo "Parsing input..."
@@ -138,7 +138,10 @@ while (( "$#" )); do
 			;;
 		--session)
 			session="${2}"
-			# Sanity check if user inputs "ses-1" isntead of "1"
+			# Sanity check if user inputs "ses-1/" instead of "1"
+			if [ "${session[@]: -1}" -eq "/" ]; then
+			    session=${session[@]::$((${#session[@]}-1))}
+			fi
 			session="${session#ses-}"
 			shift 2
 			;;
