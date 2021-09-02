@@ -15,7 +15,7 @@ while (( "$#" )); do
 		--session)
 			session="${2}"
 			sing_args+=("--session")
-			sing_args+=("/${2}")
+			sing_args+=("${2}")
 			shift 2
 			;;
 		--output)
@@ -85,9 +85,11 @@ while (( "$#" )); do
 done
 
 module load singularity/3.4.1
+echo "sing args: ${sing_args[@]}"
 singularity run ${mount_args[@]} ${singimg} ${sing_args[@]}
 
 if [ -n "${record_path}" ]; then
 	echo "`basename ${subject}` completed" >> ${record_path}
 fi
+echo "Done."
 #--subject R002/sub-r002s008 --output civet_bids_output_02 --intermediate civet_bids_intermediate_02 --qc civet_bids_qc_02
