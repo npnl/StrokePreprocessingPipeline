@@ -1,20 +1,19 @@
 #!/bin/bash
-helpstr="$(basename $0) [-h, --help]  [--intermediate DIR] [--qc DIR] [--record FILE] [--sge_output DIR] [--sge_error DIR] --singularity FILE --cohort DIR --subject DIR --lesion DIR --output DIR
+helpstr="$(basename $0) [-h, --help] [--qc DIR] [--record FILE] [--sge_output DIR] [--sge_error DIR] --singularity FILE --cohort DIR --subject DIR --lesion DIR --output DIR
 
 where:
-	-h, --help		Show this message.
-	--intermediate DIR	Optional. Store intermediate results in DIR.
-	--qc DIR		Optional. Store copy of QC results in DIR.
-	--record FILE		Optional. Report which subjects have been completed.
-	-q, --quiet		Optional. If set, minimize printed messages.
-	--sge_output DIR	Optional. Directory to store SGE output files.
-	--sge_error DIR		Optional. Directory to store SGE error files.
-	--override		Optional. If set, will run subjects within the cohort that have lesion masks instead of ignoring entire cohort.
+	-h, --help		      Show this message.
+	--qc DIR        		Optional. Store copy of QC results in DIR.
+	--record FILE		    Optional. Report which subjects have been completed.
+	-q, --quiet		      Optional. If set, minimize printed messages.
+	--sge_output DIR	  Optional. Directory to store SGE output files.
+	--sge_error DIR		  Optional. Directory to store SGE error files.
+	--override		      Optional. If set, will run subjects within the cohort that have lesion masks instead of ignoring entire cohort.
 	--singularity FILE	Path to Singularity container to run.
-	--cohort DIR		Path to top-level BIDS directory containing a cohort. Either --cohort or --subject must be defined.
-	--subject DIR		Path to individual subject in a BIDS directory. Either --cohort or --subject must be defined.
-	--lesion DIR		Path to lesion mask data.
-	--output DIR		Path to place output.
+	--cohort DIR		    Path to top-level BIDS directory containing a cohort. Either --cohort or --subject must be defined.
+	--subject DIR		    Path to individual subject in a BIDS directory. Either --cohort or --subject must be defined.
+	--lesion DIR		    Path to lesion mask data.
+	--output DIR		    Path to place output.
 "
 
 # Constants
@@ -149,59 +148,37 @@ if [ "${cohort_flag}" -eq 1 ]; then
 			fi
 			# If file exists, add subject to subjects to process
 			lesion_path="${lesion}/sub-${subject_id}/ses-${ses_id}/anat/"
-			
-			lesion_file=`eval ${lesion_name}` 
-			#"sub-${subject_id}_ses-${ses_id}_desc-*lesionmask.nii"
-
-#			buf_t1=(`find ${lesion_path} -name "*space-orig*T1lesion_mask*" -type f 2>/dev/null`)
-#			lesion_t1=${buf_t1[0]}
-#
-#			buf_flair=(`find ${lesion_path} -name "*space-orig*FLAIRlesion_mask*" -type f 2>/dev/null`)
-#			#buf_flair=(`find ${lesion_path} -name "sub-${subject_id}_ses-${ses_id}_desc-FLAIRlesionmask.nii*" -type f`)
-#			lesion_flair=${buf_flair[0]}
-#
-#			buf_dwi=(`find ${lesion_path} -name "*space-orig*DWIlesion_mask*" -type f 2>/dev/null`)
-#			#buf_dwi=(`find ${lesion_path} -name "sub-${subject_id}_ses-${ses_id}_desc-DWIlesionmask.nii*" -type f`)
-#			lesion_dwi=${buf_dwi[0]}
-#
-#			lesion_list=(`find ${lesion_path} -name "*space-orig*lesion_mask*" -type f 2>/dev/null`)
-#			lesion_args=()
-#			if [ -n "${lesion_t1}" ]; then
-#				lesion_args+=("--lesion-t1")
-#				lesion_args+=("${lesion_t1}")
-#			fi
-#			if [ -n "${lesion_flair}" ]; then
-#				lesion_args+=("--lesion-flair")
-#				lesion_args+=("${lesion_flair}")
-#			fi
-#			if [ -n "${lesion_dwi}" ]; then
-#				lesion_args+=("--lesion-dwi")
-#				lesion_args+=("${lesion_dwi}")
-#			fi
-      if [ -f "${lesion_file}" ]; then
+			lesion_file=`eval ${lesion_name}`
+			lesion_args=()
+			lesion_args+=('--lesion-t1')
+			lesion_args+=("${lesion_path}/${lesion_file}")
+      if [ -f "${lesion_path}/${lesion_file}" ]; then
         subject_process+=("${sub}")
-				q="qsub -cwd -N ${subject_id} -q compute7.q ${sge_args[@]} -l h_vmem=8G worker_preproc.sh --subject `readlink -f ${sub}` --session ${ses_id} ${lesion_args[@]} ${arg_list[@]}"
+				q="qsub -cwd -N ${subject_id} -q compute7.q -l h_vmem=12G ${sge_args[@]} worker_preproc.sh --subject `readlink -f ${sub}` --session ${ses_id} ${lesion_args[@]} ${arg_list[@]}"
 				qsub_cmd_list+=("${q}")
 			else
-				subject_omit+=("${sub}")
+				subject_omit+=("Subject: ${sub} --- Session: ${ses} --- Missing: ${lesion_file}")
 			fi
 		done
 	done
 
 	qecho "Found ${#subject_checklist[@]} subjects - ${#subject_process[@]} to process - ${#subject_omit[@]} to omit"
 	if [[ "${override}" -eq 0 && ${#subject_omit[@]} -gt 0 ]]; then
-		>&2 echo "Cohort is not ready; ${#subject_omit[@]} without lesion masks. Aborting."
+		>&2 echo "Cohort is not ready; ${#subject_omit[@]} without lesion masks:"
+		for sub in "${subject_omit[@]}"; do
+		  >&2 echo "${sub}"
+    done
 		exit 1
 	fi
 
 	#for sub in ${subject_process[@]}; do
 	for qind in `seq 0 $((${#qsub_cmd_list[@]}-1))`; do
-		#echo "command: ${qsub_cmd_list[${qind}]}"
+#		echo "command: ${qsub_cmd_list[${qind}]}"
 		q="${qsub_cmd_list[${qind}]}"
 		eval ${q}
 	done
 elif [ "${subject_flag}" -eq 1 ]; then
-	#qsub -cwd -N "${subject}" -q compute7.q ${sge_args[@]} -l h_vmem=8G civet_bids.sh --subject ${subject} ${arg_list}
+	qsub -cwd -N "${subject}" -q compute7.q -l h_vmem=12G ${sge_args[@]} worker_preproc.sh --subject ${subject} ${arg_list}
 	echo "Preprocessing: ${sub}"
 	echo "arg_list: ${arg_list[@]}"
 fi
