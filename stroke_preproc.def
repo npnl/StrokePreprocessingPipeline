@@ -82,7 +82,7 @@ keep=0
 lesion_list=()
 model="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a.mnc"
 model_mask="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc"
-model_label="MNI125NLin2009aSym"
+model_label="MNI152NLin2009aSym"
 
 echo "Parsing input..."
 
