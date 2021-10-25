@@ -2,18 +2,18 @@
 helpstr="$(basename $0) [-h, --help] [--qc DIR] [--record FILE] [--sge_output DIR] [--sge_error DIR] --singularity FILE --cohort DIR --subject DIR --lesion DIR --output DIR
 
 where:
-	-h, --help		      Show this message.
-	--qc DIR        		Optional. Store copy of QC results in DIR.
-	--record FILE		    Optional. Report which subjects have been completed.
-	-q, --quiet		      Optional. If set, minimize printed messages.
-	--sge_output DIR	  Optional. Directory to store SGE output files.
-	--sge_error DIR		  Optional. Directory to store SGE error files.
-	--override		      Optional. If set, will run subjects within the cohort that have lesion masks instead of ignoring entire cohort.
+	-h, --help		Show this message.
+	--qc DIR        	Optional. Store copy of QC results in DIR.
+	--record FILE		Optional. Report which subjects have been completed.
+	-q, --quiet		Optional. If set, minimize printed messages.
+	--sge_output DIR	Optional. Directory to store SGE output files.
+	--sge_error DIR		Optional. Directory to store SGE error files.
+	--override		Optional. If set, will run subjects within the cohort that have lesion masks instead of ignoring entire cohort.
 	--singularity FILE	Path to Singularity container to run.
-	--cohort DIR		    Path to top-level BIDS directory containing a cohort. Either --cohort or --subject must be defined.
-	--subject DIR		    Path to individual subject in a BIDS directory. Either --cohort or --subject must be defined.
-	--lesion DIR		    Path to lesion mask data.
-	--output DIR		    Path to place output.
+	--cohort DIR		Path to top-level BIDS directory containing a cohort. Either --cohort or --subject must be defined.
+	--subject DIR		Path to individual subject in a BIDS directory. Either --cohort or --subject must be defined.
+	--lesion DIR		Path to lesion mask data.
+	--output DIR		Path to place output.
 "
 
 # Constants

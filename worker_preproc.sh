@@ -1,5 +1,21 @@
 #!/bin/sh
 
+helpstr="$(basename $0) [-h] --subject DIR --output DIR [--session SES] [--model PATH] [--ignore-t1] [--ignore-t2] [--ignore-pd] [-q, --quiet] [--intermediate DIR]
+
+where:
+        -h,--help               Show this message.
+        --subject DIR           BIDS-compliant subject directory.
+	--session STR		BIDS session to process.
+	--output DIR            Directory to place pipeline output.
+	--singularity FILE	Singularity image to run ("stroke_preproc.sif").
+	--intermediate DIR	Optional. Directory in which to place intermediate files.
+	--qc DIR		Optional. Directory in which to gather QC images.
+	--record FILE		Optional. Log file to report which subjects are complete.
+	--lesion-t1 File	Optional. Path to the T1 lesion mask to co-register.
+        -q, --quiet             Optional. Suppress warnings. Default: False.
+"
+
+
 sing_args=()
 mount_args=()
 while (( "$#" )); do
@@ -9,7 +25,7 @@ while (( "$#" )); do
 			mount_args+=("-B")
 			mount_args+=("${2}:/${2}")
 			sing_args+=("--subject")
-			sing_args+=(/${2})
+			sing_args+=(/"${2}")
 			shift 2
 			;;
 		--session)
@@ -24,7 +40,7 @@ while (( "$#" )); do
 			mount_args+=("-B")
 			mount_args+=("${2}:/${2}")
 			sing_args+=("--output")
-			sing_args+=(/${2})
+			sing_args+=(/"${2}")
 			shift 2
 			;;
 		--intermediate)
@@ -33,7 +49,7 @@ while (( "$#" )); do
 			mount_args+=("-B")
 			mount_args+=("${2}:/${2}")
 			sing_args+=("--intermediate")
-			sing_args+=(/${2})
+			sing_args+=(/"${2}")
 			shift 2
 			;;
 		--qc)
@@ -44,7 +60,7 @@ while (( "$#" )); do
 			mount_args+=("-B")
 			mount_args+=("${2}:/${2}")
 			sing_args+=("--qc")
-			sing_args+=(/${qc_path})
+			sing_args+=(/"${qc_path}")
 			sing_args+=("--mask-overlap-db")
 			sing_args+=("${qc_db}")
 			sing_args+=("--mask-overlap-csv")
@@ -53,7 +69,7 @@ while (( "$#" )); do
 			;;
 		--record)
 			record_path="${2}"
-			touch ${record_path}
+			touch "${record_path}"
 			shift 2
 			;;
 		--singularity)
@@ -92,4 +108,3 @@ if [ -n "${record_path}" ]; then
 	echo "`basename ${subject}` completed" >> ${record_path}
 fi
 echo "Done."
-#--subject R002/sub-r002s008 --output civet_bids_output_02 --intermediate civet_bids_intermediate_02 --qc civet_bids_qc_02
