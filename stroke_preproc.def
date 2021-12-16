@@ -2,6 +2,9 @@ Bootstrap: docker
 From: ubuntu:18.04
 
 %setup
+  # CIVET 2.1.1 binaries for Ubuntu 18.04
+  # E.g. from https://github.com/aces/CIVET_Full_Project/releases/download/CIVET_2_1_1/civet-2.1.1-binaries-ubuntu-18.tar.gz
+  # Assumed to be in local directory; change this path to appropriate location if it was extracted elsewhere.
   IMPORT_DIR="civet-2.1.1-binaries-ubuntu-18/Linux-x86_64/"
   rsync -r -L ${IMPORT_DIR}/* ${SINGULARITY_ROOTFS}/
 	cp ./nii_slice.py ${SINGULARITY_ROOTFS}/nii_slice.py
@@ -50,8 +53,7 @@ From: ubuntu:18.04
 %runscript
 #!/bin/bash
 
-
-# This script takes in a BIDS-compatible directory and applies CIVET to the specified data.
+# This script takes in a BIDS-compatible directory and applies some of the CIVET scripts to the specified data.
 #set -e -u
 helpstr="$(basename $0) [-h] --subject DIR --output DIR [--session SES] [--model PATH] [--ignore-t1] [--ignore-t2] [--ignore-pd] [-q, --quiet] [--intermediate DIR]
 
@@ -69,22 +71,20 @@ where:
 	--ignore-t1		Optional. Ignore T1 image. Default: False.
 	--ignore-t2		Optional. Ignore T2 image. Default: False.
 	--ignore-pd		Optional. Ignore PD image. Default: False.
-	-q, --quiet		Optional. Suppress warnings. Default: False.
+	-q, --quiet		Optional. Suppress text output. Default: False.
 "
 
+# Variable instantiation
 session_list=()
 ignore_t1=0
 ignore_t2=0
 ignore_pd=0
 quiet=0
 keep=0
-#qc_dir=''
 lesion_list=()
 model="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a.mnc"
 model_mask="/share/mni-models/mni_icbm152_t1_tal_nlin_sym_09a_mask.mnc"
 model_label="MNI152NLin2009aSym"
-
-echo "Parsing input..."
 
 while (( "$#" )); do
 	case "$1" in
@@ -140,7 +140,7 @@ while (( "$#" )); do
 		--session)
 			session="${2}"
 			# Sanity check if user inputs "ses-1/" instead of "1"
-			if [ "${session[@]: -1}" -eq "/" ]; then
+			if [ "${session[@]: -1}" == "/" ]; then
 			    session=${session[@]::$((${#session[@]}-1))}
 			fi
 			session="${session#ses-}"
@@ -201,7 +201,7 @@ t1_img=${buf[0]}
 
 bids_dir_out="${output}/sub-${subject_id}/ses-${session}/anat"
 mkdir -p "${bids_dir_out}"
-# Check if we need to gunzip T1 image
+# Check if we need to gunzip T1 image; nii2mnc assumes .nii and not .nii.gz
 t1_mnc="${tmpdir}/t1.mnc"
 if [ ".gz" == "${t1_img[@]: -3}" ]; then
   gunzip -c -k "${t1_img}" > "${tmpdir}/t1.nii"
@@ -210,19 +210,16 @@ else
   nii2mnc -quiet "${t1_img}" "${t1_mnc}"
 fi
 
-# Registration
+### Registration
 qecho "Registering ${t1_mnc} to ${model}..."
 transformation="${bids_dir_out}/sub-${subject_id}_ses-${session}_desc-T1${model_label}.xfm"
 tmptransf="${tmpdir}/init.xfm"
 t1_blur="${t1_mnc%.mnc}"
 model_blur="${tmpdir}/model"
 qecho "Saving to ${transformation}"
-#mincbet "${t1_mnc}" "${tmpdir}/t1_mnc_bet" -m -f 0.2 -g -0.5
-#perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -target_mask "${model_mask}" -source_mask "${tmpdir}/t1_mnc_bet_mask.mnc" "${t1_mnc}" "${model}" "${transformation}"
-#perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -target_mask "${model_mask}" -source_mask "${tmpdir}/t1_mnc_bet_mask.mnc" "${t1_mnc}" "${model}" "${transformation}"
 perl /CIVET-2.1.1/progs/bestlinreg.pl -clobber -lsq12 -nmi "${t1_mnc}" "${model}" "${transformation}"
 
-# NUC
+### NUC
 # First try do brain extraction using transformation
 # Get model mask to native space
 qecho "Performing non-uniformity correction"
@@ -235,19 +232,13 @@ for i in `seq 0 2`; do
   nu_correct -quiet -clobber -tmpdir "${tmpdir}/nu_correct/" -mask "${mask_native}" -distance 200 -mapping_dir "${tmpdir}" "${tmpdir}/nu_correct/t1_nuc_tmp${i}.mnc" "${tmpdir}/nu_correct/t1_nuc_tmp$((i+1)).mnc"
 done
 
-# Transform nuc_image to model
+### Transform nuc_image to model
 qecho "Resampling."
 mincresample -clobber -quiet -transformation "${transformation}" -like "${model}" -trilinear "${tmpdir}/nu_correct/t1_nuc_tmp${i}.mnc" "${tmpdir}/resampled.mnc"
 
-# Normalize
+### Normalize
 qecho "Normalizing."
 inormalize -quiet -clobber -range 1.0 -model "${model}" "${tmpdir}/resampled.mnc" "${tmpdir}/norm_reg.mnc"
-
-## Normalize image
-#inormalize -quiet -clobber -range 1.0 -model "${model}" "${tmpdir}/nu_correct/t1_nuc_tmp${i}.mnc" "${tmpdir}/norm.mnc"
-#
-## Transform nuc image to model
-#mincresample -clobber -quiet -transformation "${transformation}" -like "${model}" -trilinear "${tmpdir}/norm.mnc" "${tmpdir}/norm_reg.mnc"
 
 # Convert to nii & gzip
 qecho "Finalizing T1w image"
@@ -257,7 +248,7 @@ mnc2nii "${tmpdir}/norm_reg.mnc" "${tmpdir}/norm_reg.nii"
 gzip "${tmpdir}/norm_reg.nii"
 mv "${tmpdir}/norm_reg.nii.gz" "${bids_dir_out}/${bids_final_name}"
 
-# Apply transform to lesion mask
+### Apply transform to lesion mask
 qecho "Transforming lesion mask."
 lesion_filename=`basename ${lesion_t1}`
 lesion_pre="${lesion_filename%space-*}"
@@ -282,10 +273,8 @@ if [ -n "${lesion_t1}" ]; then
   mv "${tmpdir}/lesion_reg.nii.gz" "${bids_dir_out}/${lesion_outname}"
 fi
 
-# QC
+### QC
 qc_name="${bids_dir_out}/sub-${subject_id}_ses-${session}_desc-QC.png"
-#image_name="${bids_dir_out}/anat/${bids_final}"
-#mask_name="${bids_dir_out}/anat/${lesion_bidsname}"
 model_mask_nii="${tmpdir}/model_mask.nii"
 mnc2nii "${model_mask}" "${model_mask_nii}"
 if [ -n "${model_mask}" ]; then
@@ -293,7 +282,6 @@ if [ -n "${model_mask}" ]; then
 else
   python3.8 /nii_slice.py "${bids_dir_out}/${bids_final_name}" "${qc_name}" --mask_path ${bids_dir_out}/${lesion_outname} --nslices 9
 fi
-#python3.8 /nii_slice.py "${bids_dir_out}/${bids_final_name}" "${qc_name}" --mask_path ${model_mask} --nslices 9
 
 if [ -n "${qc_dir}" ]; then
   mkdir -p ${qc_dir}
@@ -304,196 +292,4 @@ if [ -n "${mask_db}" ]; then
   python3.8 /mask_diff.py --mask_subject ${bids_dir_out}/${lesion_outname} --mask_ref ${model_mask} --database ${mask_db} --csv ${mask_csv}
 fi
 
-
-#	if [ "${#civet_opts[@]}" -eq 0 ]; then
-#		# use default civet options
-#		CIVET_Processing_Pipeline -sourcedir ${datdir} -targetdir ${civet_dir} -prefix ${sess} -N3-distance 200 -lsq12 -resample-surfaces -thickness tlaplace:tfs:tlink 30:20 -VBM -combine-surface -spawn -run ${subject_id}
-#		mv ${civet_dir}/${subject_id}/* ${civet_dir}/
-#	else
-#		CIVET_Processing_Pipeline -sourcedir ${datdir} -targetdir ${civet_dir} -prefix ${sess} ${civet_opts} -run ${subject_id}
-#		mv ${civet_dir}/${subject_id}/* ${civet_dir}/
-#	fi
-#
-#	qecho "Resampling..."
-#	# Resample output according to ${model}
-#	resample_list=()
-#	model_basename=`basename ${model}`
-#	if [ "${keep}" -eq 1 ]; then
-#		resample_dir=${inter_dir}/civet-resampled/sub-${subject_id}/${sess}/
-#		mkdir -p ${resample_dir}
-#	else
-#		resample_dir=`mktemp -d`
-#	fi
-#
-#	echo "{" >> ${resample_dir}/resampled.json
-#	echo "\"resample_model\": \"${model_basename}\"" >> ${resample_dir}/resampled.json
-#	echo "}" >> ${resample_dir}/resampled.json
-#
-#	# Resample output, place in equivalent directory in ${resample_dir}
-#	for f in `find "${civet_dir}/" -type f -name "*.mnc"`; do
-#		# civet_dir = ${out}/sub-ID/ses-X/civet/
-#		# file has ${civet_dir}/CIVET_DIR/filename
-#		fname=`basename ${f}`
-#		# strip ${civet_dir}
-#		subdirname=`dirname ${f#${civet_dir}}`
-#		mkdir -p ${resample_dir}/${subdirname}
-#
-#		# remove subject, session; replace with BIDS-compliant name
-#		civet_name=${fname#*${subject_id}_}
-#		IFS="_" read -ra civ_split <<< "${civet_name}"
-#		civ_ext=`printf "%s" ${civ_split[@]^}`
-#		bids_fname="sub-${subject_id}_${sess}_desc-${civ_ext}"
-#		res_out=${resample_dir}/${subdirname}/${bids_fname%.mnc}Resampled.mnc
-#		mincresample -like "${model}" -clobber ${f} ${res_out}
-#		resample_list+=("${res_out}")
-#	done
-#
-#	qecho "Normalizing..."
-#	# Normalize intensity
-#	if [ "${keep}" -eq 1 ]; then
-#		normalize_dir=${inter_dir}/civet-normalized/sub-${subject_id}/${sess}/
-#		mkdir -p ${normalize_dir}
-#		cp ${resample_dir}/resampled.json ${normalize_dir}/
-#	else
-#		normalize_dir=`mktemp -d`
-#	fi
-#
-#	norm_list=()
-#	for f in ${resample_list[@]}; do
-#		fname=`basename ${f}`
-#		norm_out=${normalize_dir}/${fname%.mnc}Norm.mnc
-#		inormalize -range 1.0 -model ${model} ${f} ${norm_out} -clobber
-#		norm_list+=("${norm_out}")
-#	done
-#
-#	qecho "Converting to BIDS derivatives"
-#	# Convert to nii.gz
-#	bids_dir=${output}/sub-${subject_id}/${sess}/
-#	echo "making ${bids_dir}"
-#	mkdir -p ${bids_dir}
-#	#for f in ${norm_list[@]}; do
-#	#	fname=`basename ${f}`
-#	#	bids_out=${bids_dir}/${fname%.mnc}.nii
-#	#	mnc2nii ${f} ${bids_out}
-#	#	gzip -f ${bids_out}
-#	#done
-#
-#	# Need to get non-log text files from CIVET directory
-#	#for f in `find ${civet_dir}/ -type f ! -name "*.mnc" ! -name "*.log" ! -name "*.finished" ! -name "*.nii" ! -name "*.nii.gz" ! -name "*.json" ! -name "*.failed"`; do
-#	#	buf=`dirname ${f}`/
-#	#	subdirname=${buf#*${civet_dir}}
-#	#	fname=`basename ${f}`
-#	#	# CIVET structure is [session]_[subject]_[desc]
-#	#	desc=${fname#*${subject_id}_}
-#	#	IFS="_" read -ra desc_split <<< "${desc}"
-#	#	desc_label=`printf "%s" ${desc_split[@]^}`
-#	#	bids_fname="sub-${subject_id}_${sess}_desc-${desc_label}"
-#	#
-#	#	mkdir -p ${bids_dir}/${subdirname}
-#	#	if [ "${keep}" -eq 1 ]; then
-#	#		cp ${f} ${bids_dir}/${subdirname}/`basename ${bids_fname}`
-#	#	else
-#	#		mv ${f} ${bids_dir}/${subdirname}/`basename ${bids_fname}`
-#	#	fi
-#	#done
-#
-#	# Get transform, final
-#	echo "Getting transform..."
-#	for final in `ls ${normalize_dir}/*FinalResampledNorm*`; do
-#		buf=`basename ${final}`
-#		buf="${buf#*desc-}"
-#		modality="${buf%FinalResampledNorm*}"
-#		modality="${modality}"
-#		desc_label="${modality^^}FinalResampledNorm"
-#
-#		mkdir -p "${bids_dir}/anat"
-#		# Get "final"; file was gzipped previously
-#		bids_final="sub-${subject_id}_${sess}_space-${model_label}_desc-${desc_label}.nii.gz"
-#
-#		# Convert to nii.gz
-#		final_nii=${final%.mnc}.nii
-#		mnc2nii ${final} ${final_nii}
-#		gzip ${final_nii}
-#
-#		if [ "${keep}" -eq 1 ]; then
-#			cp ${final_nii}.gz ${bids_dir}/anat/${bids_final}
-#		else
-#			mv ${final_nii}.gz ${bids_dir}/anat/${bids_final}
-#		fi
-#
-#		# Get transform
-#		tform_path="${civet_dir}/transforms/linear/${sess}_${subject_id}_${modality,,}_tal.xfm"
-#		bids_tform="sub-${subject_id}_${sess}_desc-${modality^^}${model_label}.xfm"
-#		if [ "${keep}" -eq 1 ]; then
-#			cp "${tform_path}" "${bids_dir}/anat/${bids_tform}"
-#		else
-#			mv "${tform_path}" "${bids_dir}/anat/${bids_tform}"
-#		fi
-#		# Apply computed transform to lesion masks
-#		# get lesion
-#		lesion=""
-#
-#		#for l in ${lesion_list[@]}; do
-#		#	echo "lesion_list: ${l}"
-#		#	lesion_file="${l}/${sess}/anat/sub-${subject_id}_${sess}_space-orig_label-L_desc-${modality^^}lesion_mask.nii.gz"
-#		#	echo "lesion_file: ${lesion_file}"
-#		#	qecho "Lesion check: ${lesion_file} against desc-${modality^^}lesion_mask"
-#		#	if [[ "`basename ${lesion_file}`" == *"desc-${modality^^}lesion_mask"* ]]; then
-#		#		lesion=${lesion_file}
-#		#		break
-#		#	fi
-#		#done
-#		#
-#		#if [[ "${ignore_t1}" -eq 0 && "${modality}" == "t1" ]] || [[ "${ignore_t2}" -eq 0 && "${modality}" == "t2" ]]; then
-#		lesion_list=("${lesion_t1}" "${lesion_flair}" "${lesion_dwi}")
-#		echo "lesion_list: ${lesion_list[@]}"
-#		for les in ${lesion_list[@]}; do
-#			if [ -z "${les}" ]; then
-#				qecho "WARNING: No lesion found for modality ${modality}"
-#				qecho "Checked ${lesion}"
-#				continue
-#			fi
-#			buf=`basename "${les}"`
-#			pre="${buf%space-orig*}"
-#			post="${buf#*space-orig}"
-#			lesion_bidsname="${pre}space-${model_label}${post}"
-#
-#			# Convert mask to mnc before transforming
-#			tmpdir=`mktemp -d`
-#			gunzip -c -k "${les}" > "${tmpdir}/lesionmask.nii"
-#			nii2mnc "${tmpdir}/lesionmask.nii" "${tmpdir}/lesionmask.mnc"
-#			mincresample -clobber -like "${model}" -transformation "${bids_dir}/anat/${bids_tform}" "${tmpdir}/lesionmask.mnc" "${tmpdir}/lesionmask_reg.mnc"
-#
-#			# Convert back to nii.gz, move to output
-#			mnc2nii "${tmpdir}/lesionmask_reg.mnc" "${tmpdir}/lesionmask_reg.nii"
-#			gzip "${tmpdir}/lesionmask_reg.nii"
-#			cp "${tmpdir}/lesionmask_reg.nii.gz" "${bids_dir}/anat/${lesion_bidsname}"
-#
-#			# QC
-#			qc_name="${bids_dir}/anat/sub-${subject_id}_${sess}_desc-QC.png"
-#			image_name="${bids_dir}/anat/${bids_final}"
-#			mask_name="${bids_dir}/anat/${lesion_bidsname}"
-#			python3.8 /nii_slice.py ${image_name} ${qc_name} --mask_path ${mask_name} --nslices 9
-#
-#			if [ -n "${qc_dir}" ]; then
-#				mkdir -p ${qc_dir}
-#				cp ${qc_name} ${qc_dir}/`basename ${qc_name}`
-#			fi
-#
-#			if [ -n "${mask_db}" ]; then
-#				python3.8 /mask_diff.py --mask_subject ${bids_dir}/anat/${lesion_bidsname} --mask_ref ${model_mask} --database ${mask_db} --csv ${mask_csv}
-#			fi
-#
-#			#
-#		done
-#
-#
-#
-#	done
-#
-#
-#
-#done
-#
-#
 

@@ -15,6 +15,7 @@ where:
 	--lesion DIR		Path to lesion mask data.
 	--output DIR		Path to place output.
 "
+# Note: This code is intended to work with SGE; this code will need to be adapted for other schedulers.
 
 # Constants
 lesion_name='echo sub-${subject_id}_ses-${ses_id}_space-orig_label-L_desc-T1lesion_mask.nii.gz'
@@ -152,8 +153,8 @@ if [ "${cohort_flag}" -eq 1 ]; then
 			lesion_args=()
 			lesion_args+=('--lesion-t1')
 			lesion_args+=("${lesion_path}/${lesion_file}")
-      if [ -f "${lesion_path}/${lesion_file}" ]; then
-        subject_process+=("${sub}")
+			if [ -f "${lesion_path}/${lesion_file}" ]; then
+        			subject_process+=("${sub}")
 				q="qsub -cwd -N ${subject_id} -q compute7.q -l h_vmem=12G ${sge_args[@]} worker_preproc.sh --subject `readlink -f ${sub}` --session ${ses_id} ${lesion_args[@]} ${arg_list[@]}"
 				qsub_cmd_list+=("${q}")
 			else
